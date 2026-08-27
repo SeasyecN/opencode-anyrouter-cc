@@ -9,7 +9,7 @@ and adapts the provider request to `POST /v1/messages?beta=true`.
 Build the package from this checkout:
 
 ```bash
-git clone <repository-url> opencode-anyrouter-cc
+git clone https://github.com/SeasyecN/opencode-anyrouter-cc.git opencode-anyrouter-cc
 cd opencode-anyrouter-cc
 bun install
 bun run build

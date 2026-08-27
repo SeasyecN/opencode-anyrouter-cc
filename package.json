@@ -5,7 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OWNER/opencode-anyrouter-cc.git"
+    "url": "https://github.com/SeasyecN/opencode-anyrouter-cc.git"
+  },
+  "homepage": "https://github.com/SeasyecN/opencode-anyrouter-cc",
+  "bugs": {
+    "url": "https://github.com/SeasyecN/opencode-anyrouter-cc/issues"
   },
   "type": "module",
   "exports": {
