@@ -1,0 +1,42 @@
+{
+  "name": "opencode-anyrouter-cc",
+  "version": "0.1.0",
+  "description": "OpenCode V1 AnyRouter Claude Code gateway provider",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OWNER/opencode-anyrouter-cc.git"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "bun -e \"import { rm } from 'node:fs/promises'; await rm('dist', { recursive: true, force: true })\"",
+    "build": "bun run clean && bun build src/index.ts --outdir dist --target bun --format esm && tsc -p tsconfig.build.json",
+    "check": "biome check . --error-on-warnings",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepack": "bun run build",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.15",
+    "@opencode-ai/plugin": "1.18.23",
+    "@types/bun": "latest",
+    "typescript": "^6.0.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.18.23 <2"
+  }
+}
