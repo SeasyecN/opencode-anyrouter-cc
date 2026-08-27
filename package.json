@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "clean": "bun -e \"import { rm } from 'node:fs/promises'; await rm('dist', { recursive: true, force: true })\"",
-    "build": "bun run clean && bun build src/index.ts --outdir dist --target bun --format esm && tsc -p tsconfig.build.json",
+    "build": "bun run clean && bun build src/index.ts --outdir dist --target bun --format esm && bun -e \"const file = Bun.file('dist/index.js'); await Bun.write('dist/index.js', (await file.text()).replace(/ +$/gm, ''))\" && tsc -p tsconfig.build.json",
     "check": "biome check . --error-on-warnings",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
