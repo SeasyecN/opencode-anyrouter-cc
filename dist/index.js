@@ -14389,6 +14389,80 @@ var resolveGatewayConfig = async (options = {}) => {
   return { baseUrl: normalizeBaseUrl(baseUrl), auth };
 };
 
+// src/debug.ts
+import { appendFile } from "fs/promises";
+var record2 = (value) => typeof value === "object" && value !== null ? value : undefined;
+var shapeOfBlocks = (value) => {
+  if (!Array.isArray(value))
+    return `not-an-array:${typeof value}`;
+  return value.map((item) => {
+    if (typeof item === "string") {
+      return { type: "raw-string", chars: item.length, cached: false, head: item.slice(0, 60) };
+    }
+    const block = record2(item) ?? {};
+    const text = typeof block["text"] === "string" ? block["text"] : "";
+    return {
+      type: block["type"],
+      chars: text.length,
+      cached: block["cache_control"] !== undefined,
+      head: text.slice(0, 60)
+    };
+  });
+};
+var describe3 = (value) => {
+  if (value === undefined)
+    return "<absent>";
+  if (value === null)
+    return null;
+  if (Array.isArray(value))
+    return `array[${value.length}]`;
+  if (typeof value === "object")
+    return `object{${Object.keys(value).join(",")}}`;
+  return value;
+};
+var countCacheBreakpoints = (system, messages) => {
+  const inSystem = Array.isArray(system) ? system.filter((block) => record2(block)?.["cache_control"] !== undefined).length : 0;
+  return messages.reduce((sum, item) => {
+    const content = record2(item)?.["content"];
+    if (!Array.isArray(content))
+      return sum;
+    return sum + content.filter((block) => record2(block)?.["cache_control"] !== undefined).length;
+  }, inSystem);
+};
+var traceRequest = async (entry) => {
+  const path = process.env["ANYROUTER_DEBUG"];
+  if (path === undefined || path.length === 0)
+    return;
+  const body = entry.body;
+  const messages = Array.isArray(body["messages"]) ? body["messages"] : [];
+  const tools = body["tools"];
+  const line = {
+    ok: entry.status >= 200 && entry.status < 300,
+    status: entry.status,
+    elapsedMs: entry.elapsedMs,
+    contentType: entry.contentType ?? null,
+    model: body["model"],
+    stream: body["stream"],
+    max_tokens: describe3(body["max_tokens"]),
+    temperature: describe3(body["temperature"]),
+    thinking: describe3(body["thinking"]),
+    context_management: describe3(body["context_management"]),
+    output_config: describe3(body["output_config"]),
+    tools: describe3(tools),
+    toolCount: Array.isArray(tools) ? tools.length : null,
+    systemBlocks: shapeOfBlocks(body["system"]),
+    messageCount: messages.length,
+    messageRoles: messages.map((item) => record2(item)?.["role"]),
+    payloadBytes: JSON.stringify(body).length,
+    cacheBreakpoints: countCacheBreakpoints(body["system"], messages),
+    responseBody: entry.responseBody?.slice(0, 400)
+  };
+  try {
+    await appendFile(path, `${JSON.stringify(line)}
+`);
+  } catch {}
+};
+
 // src/names.ts
 var CLAUDE_CODE_TOOL_NAMES = {
   read: "Read",
@@ -14416,23 +14490,36 @@ var fromClaudeCodeToolName = (name, map2) => {
 
 // src/request-shape.ts
 import { createHash, randomUUID } from "crypto";
+import { homedir as homedir2, hostname as hostname3 } from "os";
 var JsonRecordSchema = exports_external.object({
   type: exports_external.unknown().optional(),
   name: exports_external.unknown().optional(),
   text: exports_external.unknown().optional(),
   content: exports_external.unknown().optional(),
   model: exports_external.unknown().optional(),
+  stream: exports_external.unknown().optional(),
   messages: exports_external.unknown().optional(),
   tools: exports_external.unknown().optional(),
   system: exports_external.unknown().optional(),
   metadata: exports_external.unknown().optional()
 }).catchall(exports_external.unknown());
-var CLAUDE_CODE_BETA = "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24";
-var CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.74 (external, sdk-cli)";
+var CLAUDE_CODE_BETA = "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01";
+var CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.220 (external, sdk-cli)";
 var CLAUDE_CODE_SYSTEM_TEXT = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
-var DEFAULT_SYSTEM_TEXT = "You are an expert coding assistant operating inside pi.";
 var CLAUDE_CODE_BILLING_TEXT = "x-anthropic-billing-header: cc_version=2.1.74.7f2; cc_entrypoint=sdk-cli; cch=00000;";
 var CLAUDE_CODE_BILLING_PREFIX = "x-anthropic-billing-header: cc_version=";
+var CLAUDE_CODE_STAINLESS_HEADERS = {
+  "x-stainless-arch": "x64",
+  "x-stainless-lang": "js",
+  "x-stainless-os": "Windows",
+  "x-stainless-package-version": "0.94.0",
+  "x-stainless-retry-count": "0",
+  "x-stainless-runtime": "node",
+  "x-stainless-runtime-version": "v26.3.0",
+  "x-stainless-timeout": "3000"
+};
+var SESSION_ID = randomUUID();
+var DEVICE_ID = createHash("sha256").update(`anyrouter-cc:${hostname3()}:${homedir2()}`).digest("hex");
 var CLAUDE_CODE_SYSTEM_PREFIX = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
 var parseBody = (raw) => {
   let parsed;
@@ -14483,7 +14570,7 @@ var systemText = (system) => {
   if (typeof system === "string" && system.trim().length > 0)
     return sanitizeText(system);
   if (!Array.isArray(system))
-    return DEFAULT_SYSTEM_TEXT;
+    return;
   const text = system.map((item) => {
     if (typeof item === "string")
       return item;
@@ -14493,7 +14580,7 @@ var systemText = (system) => {
   }).filter((item) => item !== undefined && item.trim().length > 0).join(`
 
 `);
-  return text.length > 0 ? sanitizeText(text) : DEFAULT_SYSTEM_TEXT;
+  return text.length > 0 ? sanitizeText(text) : undefined;
 };
 var textBlock = (value) => {
   const block = JsonRecordSchema.safeParse(value);
@@ -14516,7 +14603,10 @@ var normalizedSystemBlocks = (system) => {
       return [block.data];
     return [{ ...block.data, text: sanitizeText(block.data.text) }];
   });
-  return blocks.length > 0 ? blocks : [{ type: "text", text: systemText(system), cache_control: { type: "ephemeral" } }];
+  if (blocks.length > 0)
+    return blocks;
+  const text = systemText(system);
+  return text === undefined ? [] : [{ type: "text", text, cache_control: { type: "ephemeral" } }];
 };
 var mappedSystem = (system) => {
   const prefix = [
@@ -14528,10 +14618,8 @@ var mappedSystem = (system) => {
     }
   ];
   if (!Array.isArray(system)) {
-    return [
-      ...prefix,
-      { type: "text", text: systemText(system), cache_control: { type: "ephemeral" } }
-    ];
+    const text = systemText(system);
+    return text === undefined ? [...prefix] : [...prefix, { type: "text", text, cache_control: { type: "ephemeral" } }];
   }
   const hasBilling = hasSystemText(system, CLAUDE_CODE_BILLING_PREFIX);
   const hasIdentity = hasSystemText(system, CLAUDE_CODE_SYSTEM_PREFIX);
@@ -14543,26 +14631,26 @@ var mappedSystem = (system) => {
     ...normalizedSystemBlocks(system)
   ];
 };
-var mappedMetadata = (metadata, workingDirectory) => {
+var mappedMetadata = (metadata) => {
   const source = JsonRecordSchema.safeParse(metadata);
-  const accountHash = createHash("sha256").update(`anyrouter-cc:${workingDirectory}`).digest("hex");
-  const sessionPrefix = `user_${accountHash}_account__session_`;
-  const existingUserId = source.success ? source.data["user_id"] : undefined;
-  const userId = typeof existingUserId === "string" && existingUserId.startsWith(sessionPrefix) ? existingUserId : `${sessionPrefix}${randomUUID()}`;
   return {
     ...source.success ? source.data : {},
-    user_id: userId
+    user_id: JSON.stringify({
+      device_id: DEVICE_ID,
+      account_uuid: "",
+      session_id: SESSION_ID
+    })
   };
 };
-var rewriteBody = (body, workingDirectory) => {
+var rewriteBody = (body) => {
   const rewrittenBody = {
     ...body,
     model: typeof body.model === "string" ? body.model.replace(/\[1m\]$/i, "") : body.model,
-    stream: false,
+    stream: body.stream === true,
     messages: mappedMessages(body.messages),
     tools: mappedTools(body.tools),
     system: mappedSystem(body.system),
-    metadata: mappedMetadata(body.metadata, workingDirectory)
+    metadata: mappedMetadata(body.metadata)
   };
   return { body: rewrittenBody, toolNames: toolNameMap };
 };
@@ -14621,7 +14709,7 @@ var messageStart = (message) => eventFrame("message_start", {
     content: [],
     stop_reason: null,
     stop_sequence: null,
-    usage: { input_tokens: message.usage.input_tokens, output_tokens: 0 }
+    usage: { ...message.usage, output_tokens: 0 }
   }
 });
 var contentBlockFrames = (block, index, toolNameMap2) => {
@@ -14714,6 +14802,119 @@ var passThrough = (raw, response) => {
     headers
   });
 };
+var DATA_PREFIX = "data:";
+var FRAME_SEPARATORS = [`\r
+\r
+`, `
+
+`];
+var nextFrameBoundary = (buffer) => {
+  let found;
+  for (const separator of FRAME_SEPARATORS) {
+    const index = buffer.indexOf(separator);
+    if (index === -1)
+      continue;
+    if (found === undefined || index < found.end) {
+      found = { end: index, next: index + separator.length };
+    }
+  }
+  return found;
+};
+var dataValue = (line) => {
+  if (!line.startsWith(DATA_PREFIX))
+    return;
+  const rest = line.slice(DATA_PREFIX.length);
+  return rest.startsWith(" ") ? rest.slice(1) : rest;
+};
+var ToolUseStartSchema = exports_external.object({
+  type: exports_external.literal("content_block_start"),
+  content_block: exports_external.object({
+    type: exports_external.literal("tool_use"),
+    name: exports_external.string()
+  }).passthrough()
+}).passthrough();
+var withRewrittenData = (lines, data) => {
+  let replaced = false;
+  return lines.flatMap((line) => {
+    if (dataValue(line) === undefined)
+      return [line];
+    if (replaced)
+      return [];
+    replaced = true;
+    return [`${DATA_PREFIX} ${data}`];
+  }).join(`
+`);
+};
+var rewriteFrame = (frame, toolNameMap2) => {
+  const lines = frame.split(`
+`);
+  const payload = lines.map(dataValue).filter((value) => value !== undefined).join(`
+`);
+  if (payload.length === 0)
+    return frame;
+  let parsed;
+  try {
+    parsed = parseJson2(payload);
+  } catch (error51) {
+    if (error51 instanceof SyntaxError)
+      return frame;
+    throw error51;
+  }
+  const start = ToolUseStartSchema.safeParse(parsed);
+  if (!start.success)
+    return frame;
+  const name = fromClaudeCodeToolName(start.data.content_block.name, toolNameMap2);
+  if (name === start.data.content_block.name)
+    return frame;
+  return withRewrittenData(lines, JSON.stringify({
+    ...start.data,
+    content_block: { ...start.data.content_block, name }
+  }));
+};
+var createSseToolNameTransform = (toolNameMap2) => {
+  const decoder = new TextDecoder;
+  const encoder = new TextEncoder;
+  let buffer = "";
+  return new TransformStream({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      for (;; ) {
+        const boundary = nextFrameBoundary(buffer);
+        if (boundary === undefined)
+          break;
+        const frame = buffer.slice(0, boundary.end);
+        const separator = buffer.slice(boundary.end, boundary.next);
+        buffer = buffer.slice(boundary.next);
+        controller.enqueue(encoder.encode(`${rewriteFrame(frame, toolNameMap2)}${separator}`));
+      }
+    },
+    flush(controller) {
+      buffer += decoder.decode();
+      if (buffer.length > 0)
+        controller.enqueue(encoder.encode(buffer));
+    }
+  });
+};
+var streamAnthropicSse = (response, options = {}) => {
+  if (response.body === null)
+    return response;
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  return new Response(response.body.pipeThrough(createSseToolNameTransform(options.toolNameMap ?? {})), {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+};
+var isEventStream = (response) => (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
+var adaptAnthropicResponse = async (response, options = {}) => {
+  if (response.status < 200 || response.status >= 300)
+    return response;
+  if (isEventStream(response))
+    return streamAnthropicSse(response, options);
+  return await convertAnthropicResponseToSse(response, options);
+};
 var convertAnthropicResponseToSse = async (response, options = {}) => {
   if (response.status < 200 || response.status >= 300)
     return response;
@@ -14777,10 +14978,11 @@ var authHeaders = (headers, auth) => {
     headers.set("x-api-key", auth.value);
   }
 };
-var claudeCodeHeaders = (headers, auth) => {
+var claudeCodeHeaders = (headers, auth, stream) => {
   const updated = new Headers(headers);
   authHeaders(updated, auth);
-  updated.set("accept", "application/json");
+  updated.set("accept", stream ? "text/event-stream" : "application/json");
+  updated.set("accept-encoding", "gzip, deflate, br, zstd");
   updated.delete("content-length");
   updated.set("content-type", "application/json");
   updated.set("anthropic-version", "2023-06-01");
@@ -14788,6 +14990,10 @@ var claudeCodeHeaders = (headers, auth) => {
   updated.set("anthropic-beta", CLAUDE_CODE_BETA);
   updated.set("user-agent", CLAUDE_CODE_USER_AGENT);
   updated.set("x-app", "cli");
+  updated.set("x-claude-code-session-id", SESSION_ID);
+  for (const [key, value] of Object.entries(CLAUDE_CODE_STAINLESS_HEADERS)) {
+    updated.set(key, value);
+  }
   return updated;
 };
 var rewrittenInit = (input, init, headers, body) => {
@@ -14799,7 +15005,6 @@ var rewrittenInit = (input, init, headers, body) => {
 };
 var createProviderFetch = (options) => {
   const upstream = options.fetchImplementation ?? globalThis.fetch;
-  const workingDirectory = options.workingDirectory ?? process.cwd();
   return async (input, init) => {
     const url2 = new URL(inputUrl(input));
     if (!isProviderMessagesRequest(url2, options.gateway, inputMethod(input, init))) {
@@ -14811,11 +15016,22 @@ var createProviderFetch = (options) => {
     const parsedBody = parseBody(rawBody);
     if (parsedBody === undefined)
       return await upstream(input, init);
-    const rewritten = rewriteBody(parsedBody, workingDirectory);
+    const rewritten = rewriteBody(parsedBody);
     url2.searchParams.set("beta", "true");
-    const headers = claudeCodeHeaders(inputHeaders(input, init), options.gateway.auth);
+    const headers = claudeCodeHeaders(inputHeaders(input, init), options.gateway.auth, rewritten.body.stream === true);
+    const startedAt = Date.now();
     const response = await upstream(url2, rewrittenInit(input, init, headers, JSON.stringify(rewritten.body)));
-    return await convertAnthropicResponseToSse(response, {
+    if (process.env["ANYROUTER_DEBUG"]) {
+      const failed = response.status < 200 || response.status >= 300;
+      await traceRequest({
+        body: rewritten.body,
+        status: response.status,
+        elapsedMs: Date.now() - startedAt,
+        contentType: response.headers.get("content-type"),
+        responseBody: failed ? await response.clone().text() : undefined
+      });
+    }
+    return await adaptAnthropicResponse(response, {
       toolNameMap: rewritten.toolNames
     });
   };

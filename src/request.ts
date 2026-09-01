@@ -1,6 +1,14 @@
+import { traceRequest } from "./debug"
 import { fromClaudeCodeToolName } from "./names"
-import { CLAUDE_CODE_BETA, CLAUDE_CODE_USER_AGENT, parseBody, rewriteBody } from "./request-shape"
-import { convertAnthropicResponseToSse } from "./response"
+import {
+  CLAUDE_CODE_BETA,
+  CLAUDE_CODE_STAINLESS_HEADERS,
+  CLAUDE_CODE_USER_AGENT,
+  parseBody,
+  rewriteBody,
+  SESSION_ID,
+} from "./request-shape"
+import { adaptAnthropicResponse } from "./response"
 import type { GatewayConfig } from "./types"
 
 export type FetchInput = Request | URL | string
@@ -51,10 +59,15 @@ const authHeaders = (headers: Headers, auth: GatewayConfig["auth"]): void => {
   }
 }
 
-const claudeCodeHeaders = (headers: Headers, auth: GatewayConfig["auth"]): Headers => {
+const claudeCodeHeaders = (
+  headers: Headers,
+  auth: GatewayConfig["auth"],
+  stream: boolean,
+): Headers => {
   const updated = new Headers(headers)
   authHeaders(updated, auth)
-  updated.set("accept", "application/json")
+  updated.set("accept", stream ? "text/event-stream" : "application/json")
+  updated.set("accept-encoding", "gzip, deflate, br, zstd")
   updated.delete("content-length")
   updated.set("content-type", "application/json")
   updated.set("anthropic-version", "2023-06-01")
@@ -62,6 +75,12 @@ const claudeCodeHeaders = (headers: Headers, auth: GatewayConfig["auth"]): Heade
   updated.set("anthropic-beta", CLAUDE_CODE_BETA)
   updated.set("user-agent", CLAUDE_CODE_USER_AGENT)
   updated.set("x-app", "cli")
+  // Claude Code sends the session id here as well as in metadata.user_id; the two must
+  // carry the same value or the gateway sees an inconsistent client.
+  updated.set("x-claude-code-session-id", SESSION_ID)
+  for (const [key, value] of Object.entries(CLAUDE_CODE_STAINLESS_HEADERS)) {
+    updated.set(key, value)
+  }
   return updated
 }
 
@@ -79,7 +98,6 @@ const rewrittenInit = (
 
 export const createProviderFetch = (options: ProviderFetchOptions): FetchImplementation => {
   const upstream = options.fetchImplementation ?? globalThis.fetch
-  const workingDirectory = options.workingDirectory ?? process.cwd()
   return async (input, init) => {
     const url = new URL(inputUrl(input))
     if (!isProviderMessagesRequest(url, options.gateway, inputMethod(input, init))) {
@@ -91,14 +109,32 @@ export const createProviderFetch = (options: ProviderFetchOptions): FetchImpleme
     const parsedBody = parseBody(rawBody)
     if (parsedBody === undefined) return await upstream(input, init)
 
-    const rewritten = rewriteBody(parsedBody, workingDirectory)
+    const rewritten = rewriteBody(parsedBody)
     url.searchParams.set("beta", "true")
-    const headers = claudeCodeHeaders(inputHeaders(input, init), options.gateway.auth)
+    const headers = claudeCodeHeaders(
+      inputHeaders(input, init),
+      options.gateway.auth,
+      rewritten.body.stream === true,
+    )
+    const startedAt = Date.now()
     const response = await upstream(
       url,
       rewrittenInit(input, init, headers, JSON.stringify(rewritten.body)),
     )
-    return await convertAnthropicResponseToSse(response, {
+
+    if (process.env["ANYROUTER_DEBUG"]) {
+      // Clone before anything reads the body, so tracing never consumes the real response.
+      const failed = response.status < 200 || response.status >= 300
+      await traceRequest({
+        body: rewritten.body,
+        status: response.status,
+        elapsedMs: Date.now() - startedAt,
+        contentType: response.headers.get("content-type"),
+        responseBody: failed ? await response.clone().text() : undefined,
+      })
+    }
+
+    return await adaptAnthropicResponse(response, {
       toolNameMap: rewritten.toolNames,
     })
   }

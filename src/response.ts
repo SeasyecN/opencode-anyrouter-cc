@@ -70,7 +70,11 @@ const messageStart = (message: AnthropicMessage): string =>
       content: [],
       stop_reason: null,
       stop_sequence: null,
-      usage: { input_tokens: message.usage.input_tokens, output_tokens: 0 },
+      // Pass the whole usage object through. cache_creation_input_tokens and
+      // cache_read_input_tokens live here, and dropping them makes every response look
+      // like a cache miss to OpenCode even when the gateway served a hit. Claude Code's
+      // own message_start carries these fields too.
+      usage: { ...message.usage, output_tokens: 0 },
     },
   })
 
@@ -179,6 +183,148 @@ const passThrough = (raw: string, response: Response): Response => {
     statusText: response.statusText,
     headers,
   })
+}
+
+// --- streaming path -------------------------------------------------------
+// When the gateway streams, the frames are already the shape OpenCode wants. The only
+// field that still has to be touched is the tool name inside content_block_start, so
+// every other frame is forwarded byte-for-byte, separator included.
+
+const DATA_PREFIX = "data:"
+
+// Anthropic emits \n\n, but accept \r\n\r\n too rather than silently buffering the whole
+// response when a proxy rewrites line endings.
+const FRAME_SEPARATORS = ["\r\n\r\n", "\n\n"] as const
+
+type FrameBoundary = { readonly end: number; readonly next: number }
+
+const nextFrameBoundary = (buffer: string): FrameBoundary | undefined => {
+  let found: FrameBoundary | undefined
+  for (const separator of FRAME_SEPARATORS) {
+    const index = buffer.indexOf(separator)
+    if (index === -1) continue
+    if (found === undefined || index < found.end) {
+      found = { end: index, next: index + separator.length }
+    }
+  }
+  return found
+}
+
+const dataValue = (line: string): string | undefined => {
+  if (!line.startsWith(DATA_PREFIX)) return undefined
+  const rest = line.slice(DATA_PREFIX.length)
+  return rest.startsWith(" ") ? rest.slice(1) : rest
+}
+
+const ToolUseStartSchema = z
+  .object({
+    type: z.literal("content_block_start"),
+    content_block: z
+      .object({
+        type: z.literal("tool_use"),
+        name: z.string(),
+      })
+      .passthrough(),
+  })
+  .passthrough()
+
+const withRewrittenData = (lines: readonly string[], data: string): string => {
+  let replaced = false
+  return lines
+    .flatMap((line) => {
+      if (dataValue(line) === undefined) return [line]
+      if (replaced) return []
+      replaced = true
+      return [`${DATA_PREFIX} ${data}`]
+    })
+    .join("\n")
+}
+
+const rewriteFrame = (frame: string, toolNameMap: Readonly<Record<string, string>>): string => {
+  const lines = frame.split("\n")
+  const payload = lines
+    .map(dataValue)
+    .filter((value): value is string => value !== undefined)
+    .join("\n")
+  if (payload.length === 0) return frame
+
+  let parsed: unknown
+  try {
+    parsed = parseJson(payload)
+  } catch (error) {
+    if (error instanceof SyntaxError) return frame
+    throw error
+  }
+
+  const start = ToolUseStartSchema.safeParse(parsed)
+  if (!start.success) return frame
+
+  const name = fromClaudeCodeToolName(start.data.content_block.name, toolNameMap)
+  if (name === start.data.content_block.name) return frame
+
+  return withRewrittenData(
+    lines,
+    JSON.stringify({
+      ...start.data,
+      content_block: { ...start.data.content_block, name },
+    }),
+  )
+}
+
+const createSseToolNameTransform = (
+  toolNameMap: Readonly<Record<string, string>>,
+): TransformStream<Uint8Array, Uint8Array> => {
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let buffer = ""
+
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true })
+      for (;;) {
+        const boundary = nextFrameBoundary(buffer)
+        if (boundary === undefined) break
+        const frame = buffer.slice(0, boundary.end)
+        const separator = buffer.slice(boundary.end, boundary.next)
+        buffer = buffer.slice(boundary.next)
+        controller.enqueue(encoder.encode(`${rewriteFrame(frame, toolNameMap)}${separator}`))
+      }
+    },
+    flush(controller) {
+      buffer += decoder.decode()
+      if (buffer.length > 0) controller.enqueue(encoder.encode(buffer))
+    },
+  })
+}
+
+export const streamAnthropicSse = (response: Response, options: ResponseOptions = {}): Response => {
+  if (response.body === null) return response
+  const headers = new Headers(response.headers)
+  // fetch already decoded the body, and neither length nor encoding survives the rewrite.
+  headers.delete("content-length")
+  headers.delete("content-encoding")
+  return new Response(
+    response.body.pipeThrough(createSseToolNameTransform(options.toolNameMap ?? {})),
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    },
+  )
+}
+
+const isEventStream = (response: Response): boolean =>
+  (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream")
+
+// Stream through when the gateway streams; fall back to synthesizing SSE from a whole
+// JSON message when it answers a streaming request with one anyway.
+export const adaptAnthropicResponse = async (
+  response: Response,
+  options: ResponseOptions = {},
+): Promise<Response> => {
+  if (response.status < 200 || response.status >= 300) return response
+  if (isEventStream(response)) return streamAnthropicSse(response, options)
+  return await convertAnthropicResponseToSse(response, options)
 }
 
 export const convertAnthropicResponseToSse = async (

@@ -1,5 +1,19 @@
 import { describe, expect, it } from "bun:test"
-import { convertAnthropicResponseToSse } from "../src/response"
+import { adaptAnthropicResponse, convertAnthropicResponseToSse } from "../src/response"
+
+const sseResponse = (chunks: readonly string[]): Response => {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  })
+  return new Response(stream, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  })
+}
 
 const readEvents = async (
   response: Response,
@@ -154,5 +168,127 @@ describe("convertAnthropicResponseToSse", () => {
     expect(converted).toBe(response)
     expect(converted.status).toBe(429)
     expect(await converted.text()).toBe("upstream error")
+  })
+})
+
+describe("adaptAnthropicResponse", () => {
+  it("forwards an upstream SSE stream and reverses tool names in place", async () => {
+    const response = sseResponse([
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"Glob","input":{}}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"pat"}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tern\\":\\"*.ts\\"}"}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ])
+
+    const adapted = await adaptAnthropicResponse(response, { toolNameMap: { glob: "Glob" } })
+    const events = await readEvents(adapted)
+
+    expect(adapted.headers.get("content-type")).toContain("text/event-stream")
+    expect(events.map(({ event }) => event)).toEqual([
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_delta",
+      "message_stop",
+    ])
+    expect(JSON.parse(events[1]?.data ?? "{}")).toMatchObject({
+      content_block: { type: "tool_use", id: "call_1", name: "glob" },
+    })
+    // Deltas must stay separate frames — collapsing them is what the old buffered path did.
+    expect(JSON.parse(events[2]?.data ?? "{}")).toMatchObject({
+      delta: { type: "input_json_delta", partial_json: '{"pat' },
+    })
+    expect(JSON.parse(events[3]?.data ?? "{}")).toMatchObject({
+      delta: { type: "input_json_delta", partial_json: 'tern":"*.ts"}' },
+    })
+  })
+
+  it("reassembles frames split across chunk boundaries", async () => {
+    const response = sseResponse([
+      "event: content_block_st",
+      'art\ndata: {"type":"content_block_start","index":0,"content_bl',
+      'ock":{"type":"tool_use","id":"call_2","name":"Read","input":{}}}\n',
+      '\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ])
+
+    const adapted = await adaptAnthropicResponse(response, { toolNameMap: { read: "Read" } })
+    const events = await readEvents(adapted)
+
+    expect(events.map(({ event }) => event)).toEqual(["content_block_start", "message_stop"])
+    expect(JSON.parse(events[0]?.data ?? "{}")).toMatchObject({
+      content_block: { type: "tool_use", id: "call_2", name: "read" },
+    })
+  })
+
+  it("streams frames as they arrive instead of buffering the whole response", async () => {
+    const encoder = new TextEncoder()
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode('event: message_start\ndata: {"type":"message_start"}\n\n'),
+        )
+        await gate
+        controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'))
+        controller.close()
+      },
+    })
+    const response = new Response(stream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })
+
+    const adapted = await adaptAnthropicResponse(response)
+    const reader = (adapted.body as ReadableStream<Uint8Array>).getReader()
+
+    // The first frame must be readable while upstream is still withholding the rest.
+    const first = await reader.read()
+    expect(new TextDecoder().decode(first.value)).toContain("message_start")
+
+    release?.()
+    const second = await reader.read()
+    expect(new TextDecoder().decode(second.value)).toContain("message_stop")
+  })
+
+  it("synthesizes SSE when a streaming request is answered with a whole JSON message", async () => {
+    const response = new Response(
+      JSON.stringify({
+        id: "msg_json",
+        type: "message",
+        role: "assistant",
+        model: "claude-opus-5",
+        content: [{ type: "text", text: "Buffered" }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+
+    const adapted = await adaptAnthropicResponse(response)
+    const events = await readEvents(adapted)
+
+    expect(adapted.headers.get("content-type")).toContain("text/event-stream")
+    expect(events.map(({ event }) => event)).toEqual([
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_stop",
+      "message_delta",
+      "message_stop",
+    ])
+  })
+
+  it("passes non-success responses through untouched", async () => {
+    const response = new Response("upstream error", { status: 502 })
+
+    const adapted = await adaptAnthropicResponse(response)
+
+    expect(adapted).toBe(response)
+    expect(await adapted.text()).toBe("upstream error")
   })
 })
