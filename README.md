@@ -1,8 +1,9 @@
 # opencode-anyrouter-cc
 
 Minimal OpenCode V1 provider for AnyRouter's Claude Code-compatible gateway.
-It registers only `anyrouter-cc/claude-opus-5[1m]`, sends `claude-opus-5` upstream,
-and adapts the provider request to `POST /v1/messages?beta=true`.
+It registers `anyrouter-cc/claude-fable-5-1[1m]` and `anyrouter-cc/claude-opus-5[1m]`,
+sends `claude-fable-5-1` / `claude-opus-5` upstream, and adapts the provider request to
+`POST /v1/messages?beta=true` in the shape claude-cli 2.1.258 sends.
 
 ## Local Installation
 
@@ -55,9 +56,10 @@ absent, `ANTHROPIC_API_KEY` is sent as `x-api-key`. Base URLs with or without
 `apiKeyHelper`, changes `globalThis.fetch`, logs credentials, or writes gateway
 configuration.
 
-With configuration present, select:
+With configuration present, select one of:
 
 ```text
+anyrouter-cc/claude-fable-5-1[1m]
 anyrouter-cc/claude-opus-5[1m]
 ```
 

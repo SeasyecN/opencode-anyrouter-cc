@@ -73,13 +73,15 @@ describe("createProviderFetch", () => {
     expect(headers.get("x-api-key")).toBeNull()
     expect(headers.get("content-length")).toBeNull()
     expect(headers.get("anthropic-beta")).toBe(
-      "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01",
+      "claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01",
     )
-    expect(headers.get("user-agent")).toBe("claude-cli/2.1.220 (external, sdk-cli)")
+    expect(headers.get("user-agent")).toBe("claude-cli/2.1.258 (external, sdk-cli)")
     expect(headers.get("accept-encoding")).toBe("gzip, deflate, br, zstd")
     expect(headers.get("x-stainless-lang")).toBe("js")
+    expect(headers.get("x-stainless-package-version")).toBe("0.112.1")
     expect(headers.get("x-claude-code-session-id")).toMatch(/^[0-9a-f-]{36}$/)
-    expect(headers.get("accept")).toBe("text/event-stream")
+    // claude-cli itself asks for application/json on streaming requests.
+    expect(headers.get("accept")).toBe("application/json")
     const rewrittenBody = JSON.parse(String(call?.init?.body)) as RewrittenBody
     expect(rewrittenBody).toMatchObject({
       model: "claude-opus-5",
@@ -250,7 +252,7 @@ describe("createProviderFetch", () => {
     const metadata = rewrittenBody?.metadata ?? {}
     expect(system).toHaveLength(3)
     expect(system[0]?.text).toBe(
-      "x-anthropic-billing-header: cc_version=2.1.74.7f2; cc_entrypoint=sdk-cli; cch=00000;",
+      "x-anthropic-billing-header: cc_version=2.1.258.1e2; cc_entrypoint=sdk-cli;",
     )
     expect(system[1]?.text).toBe("You are a Claude agent, built on Anthropic's Claude Agent SDK.")
     expect(system[2]?.text).toBe("Follow the repository rules.")

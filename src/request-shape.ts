@@ -20,21 +20,22 @@ const JsonRecordSchema = z
 
 export type JsonRecord = z.infer<typeof JsonRecordSchema>
 
-// Everything below is captured verbatim from claude-cli 2.1.220 talking to the same
-// gateway. The gateway routes, bills, and caches on client shape, so these must stay in
-// sync with a real Claude Code request. `context-1m-2025-08-07` really is listed twice.
+// Everything below is captured verbatim from claude-cli 2.1.258 (the version installed
+// here) by pointing ANTHROPIC_BASE_URL at a local listener. The gateway routes, bills,
+// and caches on client shape, so these must stay in sync with a real Claude Code
+// request. 2.1.258 lists `context-1m-2025-08-07` once; older builds sent it twice.
 export const CLAUDE_CODE_BETA =
-  "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01"
-export const CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.220 (external, sdk-cli)"
+  "claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01"
+export const CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.258 (external, sdk-cli)"
 export const CLAUDE_CODE_SYSTEM_TEXT =
   "You are a Claude agent, built on Anthropic's Claude Agent SDK."
 
 // AnyRouter's own billing protocol, not part of the Anthropic API: the gateway reads this
 // system block, strips it, and forwards the rest upstream — verified by the fact that
-// adding it still hits the same prompt cache. Leave the version and cch as-is; their
-// semantics are the gateway's, not ours.
+// adding it still hits the same prompt cache. The text is what claude-cli 2.1.258 emits
+// with CLAUDE_CODE_ATTRIBUTION_HEADER on; 2.1.258 no longer appends a `cch=` field.
 export const CLAUDE_CODE_BILLING_TEXT =
-  "x-anthropic-billing-header: cc_version=2.1.74.7f2; cc_entrypoint=sdk-cli; cch=00000;"
+  "x-anthropic-billing-header: cc_version=2.1.258.1e2; cc_entrypoint=sdk-cli;"
 
 const CLAUDE_CODE_BILLING_PREFIX = "x-anthropic-billing-header: cc_version="
 
@@ -44,7 +45,7 @@ export const CLAUDE_CODE_STAINLESS_HEADERS: Readonly<Record<string, string>> = {
   "x-stainless-arch": "x64",
   "x-stainless-lang": "js",
   "x-stainless-os": "Windows",
-  "x-stainless-package-version": "0.94.0",
+  "x-stainless-package-version": "0.112.1",
   "x-stainless-retry-count": "0",
   "x-stainless-runtime": "node",
   "x-stainless-runtime-version": "v26.3.0",

@@ -59,14 +59,12 @@ const authHeaders = (headers: Headers, auth: GatewayConfig["auth"]): void => {
   }
 }
 
-const claudeCodeHeaders = (
-  headers: Headers,
-  auth: GatewayConfig["auth"],
-  stream: boolean,
-): Headers => {
+const claudeCodeHeaders = (headers: Headers, auth: GatewayConfig["auth"]): Headers => {
   const updated = new Headers(headers)
   authHeaders(updated, auth)
-  updated.set("accept", stream ? "text/event-stream" : "application/json")
+  // Real claude-cli sends application/json even when `stream` is true; the response
+  // side decides by content-type, so nothing here depends on the streaming flag.
+  updated.set("accept", "application/json")
   updated.set("accept-encoding", "gzip, deflate, br, zstd")
   updated.delete("content-length")
   updated.set("content-type", "application/json")
@@ -111,11 +109,7 @@ export const createProviderFetch = (options: ProviderFetchOptions): FetchImpleme
 
     const rewritten = rewriteBody(parsedBody)
     url.searchParams.set("beta", "true")
-    const headers = claudeCodeHeaders(
-      inputHeaders(input, init),
-      options.gateway.auth,
-      rewritten.body.stream === true,
-    )
+    const headers = claudeCodeHeaders(inputHeaders(input, init), options.gateway.auth)
     const startedAt = Date.now()
     const response = await upstream(
       url,

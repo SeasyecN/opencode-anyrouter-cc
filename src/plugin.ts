@@ -4,8 +4,15 @@ import { createProviderFetch } from "./request"
 import type { AnyRouterPluginOptions, GatewayConfig } from "./types"
 
 const PROVIDER_ID = "anyrouter-cc"
-const MODEL_ALIAS = "claude-opus-5[1m]"
-const UPSTREAM_MODEL = "claude-opus-5"
+
+// OpenCode alias -> upstream model id. Both ship with the 1M window as the default, so
+// the `[1m]` suffix is stripped before the request leaves (see rewriteBody). Output is
+// capped at what claude-cli 2.1.258 itself requests (max_tokens: 64000), not the API's
+// 128K ceiling, so the request shape stays identical to a real Claude Code call.
+const MODELS = {
+  "claude-fable-5-1[1m]": { id: "claude-fable-5-1", name: "Claude Fable 5.1 (1M context)" },
+  "claude-opus-5[1m]": { id: "claude-opus-5", name: "Claude Opus 5 (1M context)" },
+} as const
 
 const PluginOptionsSchema = {
   baseUrl: "baseUrl",
@@ -39,17 +46,20 @@ const providerConfig = (
     baseURL: gateway.baseUrl,
     fetch: createProviderFetch({ gateway, workingDirectory }),
   },
-  models: {
-    [MODEL_ALIAS]: {
-      id: UPSTREAM_MODEL,
-      name: "Claude Opus 5 (1M context)",
-      reasoning: true,
-      tool_call: true,
-      modalities: { input: ["text"], output: ["text"] },
-      cost: { input: 0, output: 0 },
-      limit: { context: 1_000_000, output: 64_000 },
-    },
-  },
+  models: Object.fromEntries(
+    Object.entries(MODELS).map(([alias, model]) => [
+      alias,
+      {
+        id: model.id,
+        name: model.name,
+        reasoning: true,
+        tool_call: true,
+        modalities: { input: ["text"], output: ["text"] },
+        cost: { input: 0, output: 0 },
+        limit: { context: 1_000_000, output: 64_000 },
+      },
+    ]),
+  ),
 })
 
 export const createAnyRouterPlugin =

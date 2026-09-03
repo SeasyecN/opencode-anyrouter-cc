@@ -11,7 +11,7 @@ describe("createAnyRouterPlugin", () => {
     expect(typeof hooks.config).toBe("function")
   })
 
-  it("registers only the AnyRouter Claude Opus 5 one-million-context model", async () => {
+  it("registers the Fable 5.1 and Opus 5 one-million-context models", async () => {
     const plugin = createAnyRouterPlugin({
       baseUrl: "https://router.example",
       authToken: "plugin-token",
@@ -24,12 +24,18 @@ describe("createAnyRouterPlugin", () => {
 
     const providers = config.provider ?? {}
     const provider = providers["anyrouter-cc"]
-    const model = provider?.models?.["claude-opus-5[1m]"]
+    const fable = provider?.models?.["claude-fable-5-1[1m]"]
+    const opus = provider?.models?.["claude-opus-5[1m]"]
     expect(Object.keys(providers)).toEqual(["anyrouter-cc"])
     expect(provider?.api).toBe("https://router.example/v1")
     expect(provider?.npm).toBe("@ai-sdk/anthropic")
-    expect(Object.keys(provider?.models ?? {})).toEqual(["claude-opus-5[1m]"])
-    expect(model?.id).toBe("claude-opus-5")
+    expect(Object.keys(provider?.models ?? {})).toEqual([
+      "claude-fable-5-1[1m]",
+      "claude-opus-5[1m]",
+    ])
+    expect(fable?.id).toBe("claude-fable-5-1")
+    expect(fable?.limit).toEqual({ context: 1_000_000, output: 64_000 })
+    expect(opus?.id).toBe("claude-opus-5")
   })
 
   it("does not register a provider when gateway configuration is missing", async () => {

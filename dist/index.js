@@ -14503,16 +14503,16 @@ var JsonRecordSchema = exports_external.object({
   system: exports_external.unknown().optional(),
   metadata: exports_external.unknown().optional()
 }).catchall(exports_external.unknown());
-var CLAUDE_CODE_BETA = "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01";
-var CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.220 (external, sdk-cli)";
+var CLAUDE_CODE_BETA = "claude-code-20250219,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01";
+var CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.258 (external, sdk-cli)";
 var CLAUDE_CODE_SYSTEM_TEXT = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
-var CLAUDE_CODE_BILLING_TEXT = "x-anthropic-billing-header: cc_version=2.1.74.7f2; cc_entrypoint=sdk-cli; cch=00000;";
+var CLAUDE_CODE_BILLING_TEXT = "x-anthropic-billing-header: cc_version=2.1.258.1e2; cc_entrypoint=sdk-cli;";
 var CLAUDE_CODE_BILLING_PREFIX = "x-anthropic-billing-header: cc_version=";
 var CLAUDE_CODE_STAINLESS_HEADERS = {
   "x-stainless-arch": "x64",
   "x-stainless-lang": "js",
   "x-stainless-os": "Windows",
-  "x-stainless-package-version": "0.94.0",
+  "x-stainless-package-version": "0.112.1",
   "x-stainless-retry-count": "0",
   "x-stainless-runtime": "node",
   "x-stainless-runtime-version": "v26.3.0",
@@ -14978,10 +14978,10 @@ var authHeaders = (headers, auth) => {
     headers.set("x-api-key", auth.value);
   }
 };
-var claudeCodeHeaders = (headers, auth, stream) => {
+var claudeCodeHeaders = (headers, auth) => {
   const updated = new Headers(headers);
   authHeaders(updated, auth);
-  updated.set("accept", stream ? "text/event-stream" : "application/json");
+  updated.set("accept", "application/json");
   updated.set("accept-encoding", "gzip, deflate, br, zstd");
   updated.delete("content-length");
   updated.set("content-type", "application/json");
@@ -15018,7 +15018,7 @@ var createProviderFetch = (options) => {
       return await upstream(input, init);
     const rewritten = rewriteBody(parsedBody);
     url2.searchParams.set("beta", "true");
-    const headers = claudeCodeHeaders(inputHeaders(input, init), options.gateway.auth, rewritten.body.stream === true);
+    const headers = claudeCodeHeaders(inputHeaders(input, init), options.gateway.auth);
     const startedAt = Date.now();
     const response = await upstream(url2, rewrittenInit(input, init, headers, JSON.stringify(rewritten.body)));
     if (process.env["ANYROUTER_DEBUG"]) {
@@ -15039,8 +15039,10 @@ var createProviderFetch = (options) => {
 
 // src/plugin.ts
 var PROVIDER_ID = "anyrouter-cc";
-var MODEL_ALIAS = "claude-opus-5[1m]";
-var UPSTREAM_MODEL = "claude-opus-5";
+var MODELS = {
+  "claude-fable-5-1[1m]": { id: "claude-fable-5-1", name: "Claude Fable 5.1 (1M context)" },
+  "claude-opus-5[1m]": { id: "claude-opus-5", name: "Claude Opus 5 (1M context)" }
+};
 var PluginOptionsSchema = {
   baseUrl: "baseUrl",
   authToken: "authToken",
@@ -15069,17 +15071,18 @@ var providerConfig = (gateway, workingDirectory) => ({
     baseURL: gateway.baseUrl,
     fetch: createProviderFetch({ gateway, workingDirectory })
   },
-  models: {
-    [MODEL_ALIAS]: {
-      id: UPSTREAM_MODEL,
-      name: "Claude Opus 5 (1M context)",
+  models: Object.fromEntries(Object.entries(MODELS).map(([alias, model]) => [
+    alias,
+    {
+      id: model.id,
+      name: model.name,
       reasoning: true,
       tool_call: true,
       modalities: { input: ["text"], output: ["text"] },
       cost: { input: 0, output: 0 },
       limit: { context: 1e6, output: 64000 }
     }
-  }
+  ]))
 });
 var createAnyRouterPlugin = (options = {}) => async (input, receivedOptions) => {
   const resolvedOptions = {
