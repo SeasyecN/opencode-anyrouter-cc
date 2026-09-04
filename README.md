@@ -1,4 +1,4 @@
-# opencode-anyrouter-cc
+# @seasyecn/opencode-anyrouter-cc
 
 Minimal OpenCode V1 provider for AnyRouter's Claude Code-compatible gateway.
 It registers `anyrouter-cc/claude-fable-5-1[1m]` and `anyrouter-cc/claude-opus-5[1m]`,
@@ -28,6 +28,25 @@ Add the printed URI to the OpenCode `plugin` array in the project `opencode.json
 ```json
 {
   "plugin": ["file:///absolute/path/to/opencode-anyrouter-cc/dist/index.js"]
+}
+```
+
+Restart OpenCode after changing the plugin list.
+
+## npm Installation
+
+Install the published package:
+
+```bash
+bun add @seasyecn/opencode-anyrouter-cc
+# or: npm install @seasyecn/opencode-anyrouter-cc
+```
+
+Add the package name to the OpenCode `plugin` array:
+
+```json
+{
+  "plugin": ["@seasyecn/opencode-anyrouter-cc"]
 }
 ```
 
