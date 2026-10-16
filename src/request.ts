@@ -42,7 +42,11 @@ const bodyText = async (
   return await input.clone().text()
 }
 
-const isProviderMessagesRequest = (url: URL, gateway: GatewayConfig, method: string): boolean => {
+export const isProviderMessagesRequest = (
+  url: URL,
+  gateway: GatewayConfig,
+  method: string,
+): boolean => {
   const base = new URL(gateway.baseUrl)
   return (
     method === "POST" && url.origin === base.origin && url.pathname === `${base.pathname}/messages`
@@ -80,6 +84,34 @@ const claudeCodeHeaders = (headers: Headers, auth: GatewayConfig["auth"]): Heade
     updated.set(key, value)
   }
   return updated
+}
+
+// V2 native HTTP bodies are one-shot. Read a clone and replace the request, retaining
+// cancellation and transport settings without consuming the original request.
+export const rewriteProviderRequest = async (
+  request: Request,
+  gateway: GatewayConfig,
+): Promise<Request> => {
+  const url = new URL(request.url)
+  if (!isProviderMessagesRequest(url, gateway, request.method)) return request
+  const body = parseBody(await request.clone().text())
+  if (body === undefined) return request
+
+  url.searchParams.set("beta", "true")
+  return new Request(url.href, {
+    method: request.method,
+    headers: claudeCodeHeaders(request.headers, gateway.auth),
+    body: JSON.stringify(rewriteBody(body).body),
+    signal: request.signal,
+    redirect: request.redirect,
+    credentials: request.credentials,
+    cache: request.cache,
+    mode: request.mode,
+    referrer: request.referrer,
+    referrerPolicy: request.referrerPolicy,
+    integrity: request.integrity,
+    keepalive: request.keepalive,
+  })
 }
 
 const rewrittenInit = (

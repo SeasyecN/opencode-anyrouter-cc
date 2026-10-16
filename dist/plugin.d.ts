@@ -1,5 +1,5 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode/plugin";
 import type { AnyRouterPluginOptions } from "./types";
-export declare const createAnyRouterPlugin: (options?: AnyRouterPluginOptions) => Plugin;
-export declare const AnyRouterPlugin: Plugin;
+export declare const createAnyRouterPlugin: (options?: AnyRouterPluginOptions) => Plugin.Plugin;
+export declare const AnyRouterPlugin: Plugin.Plugin;
 export default AnyRouterPlugin;

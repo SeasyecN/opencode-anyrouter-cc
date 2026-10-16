@@ -14,6 +14,9 @@ var __export = (target, all) => {
     });
 };
 
+// src/plugin.ts
+import { Model, Plugin, Provider } from "@opencode/plugin";
+
 // src/config.ts
 import { homedir } from "os";
 import { join } from "path";
@@ -14948,23 +14951,6 @@ var convertAnthropicResponseToSse = async (response, options = {}) => {
 };
 
 // src/request.ts
-var inputUrl = (input) => input instanceof Request ? input.url : input instanceof URL ? input.href : input;
-var inputMethod = (input, init) => (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-var inputHeaders = (input, init) => {
-  const headers = new Headers(input instanceof Request ? input.headers : undefined);
-  if (init?.headers !== undefined) {
-    for (const [key, value] of new Headers(init.headers))
-      headers.set(key, value);
-  }
-  return headers;
-};
-var bodyText = async (input, init) => {
-  if (typeof init?.body === "string")
-    return init.body;
-  if (!(input instanceof Request))
-    return;
-  return await input.clone().text();
-};
 var isProviderMessagesRequest = (url2, gateway, method) => {
   const base = new URL(gateway.baseUrl);
   return method === "POST" && url2.origin === base.origin && url2.pathname === `${base.pathname}/messages`;
@@ -14996,49 +14982,32 @@ var claudeCodeHeaders = (headers, auth) => {
   }
   return updated;
 };
-var rewrittenInit = (input, init, headers, body) => {
-  const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-  const rewritten = { ...init, method: "POST", headers, body };
-  if (signal !== undefined)
-    rewritten.signal = signal;
-  return rewritten;
-};
-var createProviderFetch = (options) => {
-  const upstream = options.fetchImplementation ?? globalThis.fetch;
-  return async (input, init) => {
-    const url2 = new URL(inputUrl(input));
-    if (!isProviderMessagesRequest(url2, options.gateway, inputMethod(input, init))) {
-      return await upstream(input, init);
-    }
-    const rawBody = await bodyText(input, init);
-    if (rawBody === undefined)
-      return await upstream(input, init);
-    const parsedBody = parseBody(rawBody);
-    if (parsedBody === undefined)
-      return await upstream(input, init);
-    const rewritten = rewriteBody(parsedBody);
-    url2.searchParams.set("beta", "true");
-    const headers = claudeCodeHeaders(inputHeaders(input, init), options.gateway.auth);
-    const startedAt = Date.now();
-    const response = await upstream(url2, rewrittenInit(input, init, headers, JSON.stringify(rewritten.body)));
-    if (process.env["ANYROUTER_DEBUG"]) {
-      const failed = response.status < 200 || response.status >= 300;
-      await traceRequest({
-        body: rewritten.body,
-        status: response.status,
-        elapsedMs: Date.now() - startedAt,
-        contentType: response.headers.get("content-type"),
-        responseBody: failed ? await response.clone().text() : undefined
-      });
-    }
-    return await adaptAnthropicResponse(response, {
-      toolNameMap: rewritten.toolNames
-    });
-  };
+var rewriteProviderRequest = async (request, gateway) => {
+  const url2 = new URL(request.url);
+  if (!isProviderMessagesRequest(url2, gateway, request.method))
+    return request;
+  const body = parseBody(await request.clone().text());
+  if (body === undefined)
+    return request;
+  url2.searchParams.set("beta", "true");
+  return new Request(url2.href, {
+    method: request.method,
+    headers: claudeCodeHeaders(request.headers, gateway.auth),
+    body: JSON.stringify(rewriteBody(body).body),
+    signal: request.signal,
+    redirect: request.redirect,
+    credentials: request.credentials,
+    cache: request.cache,
+    mode: request.mode,
+    referrer: request.referrer,
+    referrerPolicy: request.referrerPolicy,
+    integrity: request.integrity,
+    keepalive: request.keepalive
+  });
 };
 
 // src/plugin.ts
-var PROVIDER_ID = "anyrouter-cc";
+var PROVIDER_ID = Provider.ID.make("anyrouter-cc");
 var MODELS = {
   "claude-fable-5-1[1m]": { id: "claude-fable-5-1", name: "Claude Fable 5.1 (1M context)" },
   "claude-opus-5[1m]": { id: "claude-opus-5", name: "Claude Opus 5 (1M context)" }
@@ -15062,46 +15031,71 @@ var pluginOptions = (options) => {
     ...typeof apiKey === "string" ? { apiKey } : {}
   };
 };
-var providerConfig = (gateway, workingDirectory) => ({
-  api: gateway.baseUrl,
+var providerInfo = (gateway) => ({
+  ...Provider.Info.empty(PROVIDER_ID),
   name: "AnyRouter Claude Code",
-  npm: "@ai-sdk/anthropic",
-  options: {
-    apiKey: "anyrouter-cc",
+  activation: "enabled",
+  package: "@opencode/ai/providers/anthropic",
+  settings: {
     baseURL: gateway.baseUrl,
-    fetch: createProviderFetch({ gateway, workingDirectory })
-  },
-  models: Object.fromEntries(Object.entries(MODELS).map(([alias, model]) => [
-    alias,
-    {
-      id: model.id,
-      name: model.name,
-      reasoning: true,
-      tool_call: true,
-      modalities: { input: ["text"], output: ["text"] },
-      cost: { input: 0, output: 0 },
-      limit: { context: 1e6, output: 64000 }
-    }
-  ]))
+    ...gateway.auth.kind === "bearer" ? { authToken: gateway.auth.value } : { apiKey: gateway.auth.value },
+    encoding: "none"
+  }
 });
-var createAnyRouterPlugin = (options = {}) => async (input, receivedOptions) => {
-  const resolvedOptions = {
-    ...options,
-    ...pluginOptions(receivedOptions),
-    cwd: options.cwd ?? input.directory
-  };
-  return {
-    config: async (config2) => {
-      const gateway = await resolveGatewayConfig(resolvedOptions);
-      if (gateway === undefined)
+var createAnyRouterPlugin = (options = {}) => Plugin.define({
+  id: "@seasyecn/opencode-anyrouter-cc",
+  async setup(ctx) {
+    const gateway = await resolveGatewayConfig({
+      ...options,
+      ...pluginOptions(ctx.options),
+      cwd: options.cwd ?? ctx.location.directory
+    });
+    if (gateway === undefined)
+      return;
+    const traces = new WeakMap;
+    await ctx.provider.transform((editor) => {
+      editor.add({
+        info: providerInfo(gateway),
+        models: Object.entries(MODELS).map(([alias, model]) => ({
+          ...Model.Info.default(PROVIDER_ID, Model.ID.make(alias)),
+          modelID: Model.ID.make(model.id),
+          name: model.name,
+          capabilities: { tools: true, input: ["text"], output: ["text"] },
+          limit: { context: 1e6, output: 64000 }
+        }))
+      });
+    });
+    await ctx.session.hook("http.request", async (event) => {
+      if (event.model.providerID !== PROVIDER_ID)
         return;
-      config2.provider = {
-        ...config2.provider ?? {},
-        [PROVIDER_ID]: providerConfig(gateway, input.directory)
-      };
-    }
-  };
-};
+      const request = await rewriteProviderRequest(event.request, gateway);
+      if (request !== event.request && process.env["ANYROUTER_DEBUG"]) {
+        const body = parseBody(await request.clone().text());
+        if (body !== undefined)
+          traces.set(request, { body, startedAt: Date.now() });
+      }
+      event.request = request;
+    }, { providerID: PROVIDER_ID });
+    await ctx.session.hook("http.response", async (event) => {
+      if (event.model.providerID !== PROVIDER_ID)
+        return;
+      if (!isProviderMessagesRequest(new URL(event.request.url), gateway, event.request.method))
+        return;
+      const trace = traces.get(event.request);
+      if (trace !== undefined) {
+        traces.delete(event.request);
+        await traceRequest({
+          body: trace.body,
+          status: event.response.status,
+          elapsedMs: Date.now() - trace.startedAt,
+          contentType: event.response.headers.get("content-type"),
+          responseBody: event.response.ok ? undefined : await event.response.clone().text()
+        });
+      }
+      event.response = await adaptAnthropicResponse(event.response, { toolNameMap });
+    }, { providerID: PROVIDER_ID });
+  }
+});
 var AnyRouterPlugin = createAnyRouterPlugin();
 var plugin_default = AnyRouterPlugin;
 export {
